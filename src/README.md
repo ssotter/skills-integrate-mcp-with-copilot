@@ -5,7 +5,9 @@ A super simple FastAPI application that allows students to view and sign up for 
 ## Features
 
 - View all available extracurricular activities
-- Sign up for activities
+- Register and log in users
+- Role-based access control (`admin`, `activity-manager`, `student`)
+- Only `admin` and `activity-manager` can register/unregister students in activities
 
 ## Getting Started
 
@@ -29,8 +31,19 @@ A super simple FastAPI application that allows students to view and sign up for 
 
 | Method | Endpoint                                                          | Description                                                         |
 | ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
-| GET    | `/activities`                                                     | Get all activities with their details and current participant count |
-| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Sign up for an activity                                             |
+| POST   | `/auth/register`                                                  | Register a user (default role: `student`)                           |
+| POST   | `/auth/login`                                                     | Log in and receive bearer token                                     |
+| POST   | `/auth/logout`                                                    | Invalidate current session token                                    |
+| GET    | `/auth/me`                                                        | Get current authenticated user                                      |
+| GET    | `/activities`                                                     | Get all activities (requires login)                                 |
+| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Register a student in an activity (admin/manager only)             |
+| DELETE | `/activities/{activity_name}/unregister?email=student@...`        | Unregister a student (admin/manager only)                           |
+
+## Default Test Accounts
+
+- `admin@mergington.edu` / `admin123`
+- `manager@mergington.edu` / `manager123`
+- `student@mergington.edu` / `student123`
 
 ## Data Model
 
