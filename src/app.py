@@ -5,11 +5,15 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+from pydantic import BaseModel
+from typing import Literal
+import hashlib
+import secrets
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -78,18 +82,142 @@ activities = {
 }
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    role: Literal["admin", "activity-manager", "student"] = "student"
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+# In-memory users and sessions for MVP simplicity
+users = {
+    "admin@mergington.edu": {
+        "email": "admin@mergington.edu",
+        "password_hash": hash_password("admin123"),
+        "role": "admin",
+    },
+    "manager@mergington.edu": {
+        "email": "manager@mergington.edu",
+        "password_hash": hash_password("manager123"),
+        "role": "activity-manager",
+    },
+    "student@mergington.edu": {
+        "email": "student@mergington.edu",
+        "password_hash": hash_password("student123"),
+        "role": "student",
+    },
+}
+
+sessions: dict[str, str] = {}
+
+
+def get_current_user(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    email = sessions.get(token)
+    if not email or email not in users:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return users[email]
+
+
+def require_role(allowed_roles: set[str]):
+    def checker(current_user=Depends(get_current_user)):
+        if current_user["role"] not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to perform this action"
+            )
+        return current_user
+
+    return checker
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/auth/register")
+def register(request: RegisterRequest):
+    email = request.email.lower()
+
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    if len(request.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    if email in users:
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    users[email] = {
+        "email": email,
+        "password_hash": hash_password(request.password),
+        "role": request.role,
+    }
+    return {"message": "User registered successfully"}
+
+
+@app.post("/auth/login")
+def login(request: LoginRequest):
+    email = request.email.lower()
+
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    user = users.get(email)
+
+    if not user or user["password_hash"] != hash_password(request.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = secrets.token_urlsafe(32)
+    sessions[token] = email
+
+    return {
+        "token": token,
+        "email": user["email"],
+        "role": user["role"],
+    }
+
+
+@app.post("/auth/logout")
+def logout(current_user=Depends(get_current_user), authorization: str | None = Header(default=None)):
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        sessions.pop(token, None)
+
+    return {"message": f"Logged out {current_user['email']}"}
+
+
+@app.get("/auth/me")
+def me(current_user=Depends(get_current_user)):
+    return {
+        "email": current_user["email"],
+        "role": current_user["role"],
+    }
+
+
 @app.get("/activities")
-def get_activities():
+def get_activities(current_user=Depends(get_current_user)):
     return activities
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(
+    activity_name: str,
+    email: str,
+    current_user=Depends(require_role({"admin", "activity-manager"}))
+):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +239,11 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(
+    activity_name: str,
+    email: str,
+    current_user=Depends(require_role({"admin", "activity-manager"}))
+):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:

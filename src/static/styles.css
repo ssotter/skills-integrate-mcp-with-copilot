@@ -28,6 +28,11 @@ header h1 {
   margin-bottom: 10px;
 }
 
+.auth-status {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
 main {
   display: flex;
   flex-wrap: wrap;
